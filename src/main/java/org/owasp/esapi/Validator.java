@@ -300,6 +300,14 @@ public interface Validator {
     /**
      * Returns {@code true} if the parameter {@code input} is valid and <i>presumably</i> safe.
      * <p>
+     * This method <i>fails closed</i>: it returns {@code true} only if the AntiSamy
+     * scan of {@code input} reports no errors (regardless of the setting of the ESAPI
+     * property {@code Validator.HtmlValidationAction}) <b>and</b> the sanitized HTML
+     * (as returned by {@link #getValidSafeHTML(String, String, int, boolean)}) is
+     * exactly equal to {@code input}. That is, {@code input} must be returned
+     * completely unaltered by sanitization. Any difference, any AntiSamy scan error,
+     * or any exception results in {@code false}.
+     * <p>
      * <b>WARNING:</b> Note that the only safe way to use this method is if you
      * instead of using the passed-in parameter '{@code input}' (which should
      * not be completely trusted as-is, regardless of whether this method returns
@@ -323,17 +331,24 @@ public interface Validator {
      *         If {@code allowNull} is true then an input that is NULL or an empty string will be legal.
      *         If {@code allowNull} is false then NULL or an empty String will throw a ValidationException.
      *
-     * @return True if the {@code input} is <i>presumably</i> safe, otherwise false.
+     * @return {@code true} only if AntiSamy reports no scan errors for {@code input}
+     *         and sanitizing {@code input} leaves it exactly unchanged; otherwise {@code false}.
      *
      * @throws IntrusionException The parameter {@code input} likely indicates an attack.
      *
      * @deprecated Deprecated as of ESAPI 2.5.3.0. This method will be removed in 1 year
-     * after the ESAPI 2.5.3.0 release date (2023-11-24).
+     * after the ESAPI 2.5.3.0 release date (2023-11-24). To address GitHub Security
+     * Advisory GHSA-r68h-jhhj-9jvm, this method now fails closed: it returns
+     * {@code true} only when the AntiSamy scan reports no errors <b>and</b> the
+     * sanitized HTML equals {@code input} exactly; any difference, scan error, or
+     * exception returns {@code false}. Use
+     * {@link #getValidSafeHTML(String, String, int, boolean)} instead and use
+     * <i>its</i> (sanitized) result rather than the original {@code input}.
      *
      * @see <a href="https://github.com/ESAPI/esapi-java-legacy/security/advisories/GHSA-r68h-jhhj-9jvm"
      * target="_blank" rel="noreferrer noopener">GitHub Security Advisory: Validator.isValidSafeHTML
      * is being deprecated and will be deleted in 1 year</a>
-     */ 
+     */
     @Deprecated
     boolean isValidSafeHTML(String context, String input, int maxLength, boolean allowNull) throws IntrusionException;
 
@@ -341,9 +356,13 @@ public interface Validator {
      * Returns {@code true} if the parameter {@code input} is valid and <i>presumably</i> safe.
      * Any exceptions are added to the supplied {@code errorList} parameter.
      * <p>
-     * <p>
-     * Calls {@link #getValidSafeHTML(String, String, int, boolean)},
-     * and returns true if no exceptions are thrown.
+     * This method <i>fails closed</i>: it returns {@code true} only if the AntiSamy
+     * scan of {@code input} reports no errors (regardless of the setting of the ESAPI
+     * property {@code Validator.HtmlValidationAction}) <b>and</b> the sanitized HTML
+     * (as returned by {@link #getValidSafeHTML(String, String, int, boolean)}) is
+     * exactly equal to {@code input}. Any difference, any AntiSamy scan error, or any
+     * other validation failure results in {@code false} and the corresponding
+     * {@code ValidationException} being added to {@code errorList}.
      * <p>
      * <b>WARNING:</b> Note that the only safe way to use this method is if you
      * instead of using the passed-in parameter '{@code input}' (which should
@@ -369,12 +388,20 @@ public interface Validator {
      *         If {@code allowNull} is false then NULL or an empty String will throw a ValidationException.
      * @param errorList The error list to which any {@code ValidationException} messages are added.
      *
-     * @return True if the {@code input} is <i>presumably</i> safe, otherwise false.
+     * @return {@code true} only if AntiSamy reports no scan errors for {@code input}
+     *         and sanitizing {@code input} leaves it exactly unchanged; otherwise {@code false}.
      *
      * @throws IntrusionException The parameter {@code input} likely indicates an attack.
      *
      * @deprecated Deprecated as of ESAPI 2.5.3.0. This method will be removed in 1 year
-     * after the ESAPI 2.5.3.0 release date (2023-11-24).
+     * after the ESAPI 2.5.3.0 release date (2023-11-24). To address GitHub Security
+     * Advisory GHSA-r68h-jhhj-9jvm, this method now fails closed: it returns
+     * {@code true} only when the AntiSamy scan reports no errors <b>and</b> the
+     * sanitized HTML equals {@code input} exactly; any difference, scan error, or
+     * exception returns {@code false} (recording the {@code ValidationException} in
+     * {@code errorList}). Use
+     * {@link #getValidSafeHTML(String, String, int, boolean, ValidationErrorList)}
+     * instead and use <i>its</i> (sanitized) result rather than the original {@code input}.
      *
      * @see <a href="https://github.com/ESAPI/esapi-java-legacy/security/advisories/GHSA-r68h-jhhj-9jvm"
      * target="_blank" rel="noreferrer noopener">GitHub Security Advisory: Validator.isValidSafeHTML

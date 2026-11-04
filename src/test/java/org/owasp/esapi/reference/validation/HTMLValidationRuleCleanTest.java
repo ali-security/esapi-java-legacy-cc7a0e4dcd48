@@ -280,6 +280,12 @@ public class HTMLValidationRuleCleanTest {
      * @see org.owasp.esapi.Validator#isValidSafeHTML(String,String,int,boolean)
      * @see org.owasp.esapi.Validator#isValidSafeHTML(String,String,int,boolean,org.owasp.esapi.ValidationErrorList)
      */
+    //
+    // GHSA-r68h-jhhj-9jvm: In "clean" mode, Validator.isValidSafeHTML() used to
+    // return true for unsafe input because AntiSamy merely sanitized it (and only
+    // logged the scan errors), even though callers then go on to use the original,
+    // unsanitized input. It now fails closed: it returns true only if AntiSamy
+    // reports no scan errors and the sanitized HTML equals the input exactly.
     @Deprecated
     @Test
     public void testIsValidSafeHTML() {
@@ -288,38 +294,110 @@ public class HTMLValidationRuleCleanTest {
 
         assertTrue(instance.isValidSafeHTML("test", "<b>Jeff</b>", 100, false));
         assertTrue(instance.isValidSafeHTML("test", "<a href=\"http://www.aspectsecurity.com\">Aspect Security</a>", 100, false));
-        assertTrue(instance.isValidSafeHTML("test", "Test. <script>alert(document.cookie)</script>", 100, false));
-        assertTrue(instance.isValidSafeHTML("test", "Test. <div style={xss:expression(xss)}>", 100, false));
-        assertTrue(instance.isValidSafeHTML("test", "Test. <s%00cript>alert(document.cookie)</script>", 100, false));
-        assertTrue(instance.isValidSafeHTML("test", "Test. <s\tcript>alert(document.cookie)</script>", 100, false));
-        assertTrue(instance.isValidSafeHTML("test", "Test. <s\r\n\0cript>alert(document.cookie)</script>", 100, false));
+        assertFalse(instance.isValidSafeHTML("test", "Test. <script>alert(document.cookie)</script>", 100, false));
+        assertFalse(instance.isValidSafeHTML("test", "Test. <div style={xss:expression(xss)}>", 100, false));
+        assertFalse(instance.isValidSafeHTML("test", "Test. <s%00cript>alert(document.cookie)</script>", 100, false));
+        assertFalse(instance.isValidSafeHTML("test", "Test. <s\tcript>alert(document.cookie)</script>", 100, false));
+        assertFalse(instance.isValidSafeHTML("test", "Test. <s\r\n\0cript>alert(document.cookie)</script>", 100, false));
 
         ValidationErrorList errors = new ValidationErrorList();
         assertTrue(instance.isValidSafeHTML("test1", "<b>Jeff</b>", 100, false, errors));
         assertTrue(instance.isValidSafeHTML("test2", "<a href=\"http://www.aspectsecurity.com\">Aspect Security</a>", 100, false, errors));
-        assertTrue(instance.isValidSafeHTML("test3", "Test. <script>alert(document.cookie)</script>", 100, false, errors));
-        assertTrue(instance.isValidSafeHTML("test4", "Test. <div style={xss:expression(xss)}>", 100, false, errors));
-        assertTrue(instance.isValidSafeHTML("test5", "Test. <s%00cript>alert(document.cookie)</script>", 100, false, errors));
-        assertTrue(instance.isValidSafeHTML("test6", "Test. <s\tcript>alert(document.cookie)</script>", 100, false, errors));
-        assertTrue(instance.isValidSafeHTML("test7", "Test. <s\r\n\0cript>alert(document.cookie)</script>", 100, false, errors));
         assertTrue(errors.size() == 0);
+        assertFalse(instance.isValidSafeHTML("test3", "Test. <script>alert(document.cookie)</script>", 100, false, errors));
+        assertFalse(instance.isValidSafeHTML("test4", "Test. <div style={xss:expression(xss)}>", 100, false, errors));
+        assertFalse(instance.isValidSafeHTML("test5", "Test. <s%00cript>alert(document.cookie)</script>", 100, false, errors));
+        assertFalse(instance.isValidSafeHTML("test6", "Test. <s\tcript>alert(document.cookie)</script>", 100, false, errors));
+        assertFalse(instance.isValidSafeHTML("test7", "Test. <s\r\n\0cript>alert(document.cookie)</script>", 100, false, errors));
+        assertTrue(errors.size() == 5);
 
         // Extracted from testIEConditionalComment().
+        errors = new ValidationErrorList();
         String input = "<!--[if gte IE 4]>\r\n <SCRIPT>alert('XSS');</SCRIPT>\r\n<![endif]-->";
-        boolean isSafe = instance.isValidSafeHTML("test12", input, 100, false, errors);
-        assertTrue(instance.isValidSafeHTML("test12", input, 100, false, errors)); // Safe bc "" gets returned!!!
+        assertFalse(instance.isValidSafeHTML("test12", input, 100, false)); // Not safe bc sanitizing changes it to "".
+        assertFalse(instance.isValidSafeHTML("test12", input, 100, false, errors));
+        assertTrue(errors.size() == 1);
 
         // Extracted from testNekoDOSWithAnHTMLComment()
         errors = new ValidationErrorList();
         input = "<!--><?a/";
-        assertTrue(instance.isValidSafeHTML("test11", input, 100, false, errors)); // Safe bc "" gets returned!!!
-        assertTrue(errors.size() == 0);
+        assertFalse(instance.isValidSafeHTML("test11", input, 100, false, errors)); // Not safe bc sanitizing changes it to "".
+        assertTrue(errors.size() == 1);
 
-        // Extracted from testESAPI_CVE_2022_24891() 
+        // Extracted from testESAPI_CVE_2022_24891()
         String expectedSafeText = "This is safe from XSS. Trust us!";
         String badVoodoo = "<a href=\"javascript&#00058alert(1)>" + expectedSafeText + "</a>";
         boolean result = instance.isValidSafeHTML("CVE-2021-35043", badVoodoo, 200, false);
-        assertTrue( result );
+        assertFalse( result );
+    }
+
+    // GHSA-r68h-jhhj-9jvm: Even though Validator.HtmlValidationAction is "clean"
+    // (so getValidSafeHTML() only logs the AntiSamy scan errors and returns the
+    // sanitized output), isValidSafeHTML() must treat AntiSamy scan errors as a
+    // failure and record that ValidationException in the error list.
+    @Deprecated
+    @Test
+    public void testIsValidSafeHTMLFailsOnScanErrorsInCleanMode() throws Exception {
+        System.out.println("testIsValidSafeHTMLFailsOnScanErrorsInCleanMode");
+        Validator instance = ESAPI.validator();
+
+        String input = "Test. <script>alert(document.cookie)</script>";
+        // In "clean" mode, this does not throw; it silently strips the script.
+        String sanitized = instance.getValidSafeHTML("scanErrors-get", input, 100, false);
+        assertThat(sanitized, not(containsString("script")));
+
+        ValidationErrorList errors = new ValidationErrorList();
+        assertFalse(instance.isValidSafeHTML("scanErrors", input, 100, false, errors));
+        assertEquals(1, errors.size());
+        ValidationException vex = errors.getError("scanErrors");
+        assertNotNull(vex);
+        assertEquals("scanErrors: Invalid HTML input", vex.getUserMessage());
+        // The AntiSamy scan errors themselves are what was detected, not merely the altered output.
+        assertThat(vex.getLogMessage(), containsString("does not follow rules"));
+
+        // Exceptions (here, input longer than maxLength) are also reported as not valid.
+        errors = new ValidationErrorList();
+        assertFalse(instance.isValidSafeHTML("tooLong", "<b>Jeff</b>", 5, false));
+        assertFalse(instance.isValidSafeHTML("tooLong", "<b>Jeff</b>", 5, false, errors));
+        assertEquals(1, errors.size());
+
+        // Null / empty input is still valid when (and only when) allowNull is true.
+        errors = new ValidationErrorList();
+        assertTrue(instance.isValidSafeHTML("empty1", "", 100, true));
+        assertTrue(instance.isValidSafeHTML("empty2", null, 100, true, errors));
+        assertTrue(errors.isEmpty());
+        assertFalse(instance.isValidSafeHTML("empty3", "", 100, false));
+        assertFalse(instance.isValidSafeHTML("empty4", null, 100, false, errors));
+        assertEquals(1, errors.size());
+    }
+
+    // GHSA-r68h-jhhj-9jvm: Input that is canonicalized (decoded) before being
+    // scanned, or otherwise altered by sanitization, is never reported as valid,
+    // because the caller would otherwise go on to use the original, unsanitized input.
+    @Deprecated
+    @Test
+    public void testIsValidSafeHTMLFailsWhenSanitizingAltersInput() throws Exception {
+        System.out.println("testIsValidSafeHTMLFailsWhenSanitizingAltersInput");
+        Validator instance = ESAPI.validator();
+
+        String[] payloads = {
+            "<b>Jeff",                                                       // Unclosed tag gets closed.
+            "Test. <a href=\"javascript:alert(1)\">click me</a>",            // javascript: URL is dropped.
+            "<img src=x onerror=alert(1)>",                                  // Event handler / tag dropped.
+            "Test. <b onmouseover=alert(1)>Jeff</b>",                        // Event handler attribute dropped.
+            " <b>Jeff</b> "                                                  // Even whitespace changes count.
+        };
+
+        int testCase = 0;
+        for (String payload : payloads) {
+            String testId = "altered-" + testCase++;
+            ValidationErrorList errors = new ValidationErrorList();
+            String sanitized = instance.getValidSafeHTML(testId + "-get", payload, 100, false, errors);
+            assertThat(testId + ": expected sanitizing to alter the payload", sanitized, not(equalTo(payload)));
+            assertFalse(testId + ": payload should not be valid", instance.isValidSafeHTML(testId, payload, 100, false));
+            assertFalse(testId + ": payload should not be valid", instance.isValidSafeHTML(testId, payload, 100, false, errors));
+            assertNotNull(testId + ": expected a recorded ValidationException", errors.getError(testId));
+        }
     }
 
     // This test has been significantly changed because as on AntiSamy 1.7.4
